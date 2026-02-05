@@ -1,0 +1,64 @@
+[files]
+extend-exclude = [
+  # Build
+  "build.zig.zon",
+  "build.zig.zon.nix",
+  "build.zig.zon.txt",
+  "build.zig.zon.json",
+  # vendored code
+  "vendor/*",
+  "pkg/*",
+  "src/stb/*",
+  # "grey" color names are valid
+  "src/terminal/res/rgb.txt",
+  # Do not self-check
+  "typos.toml",
+  # Fonts
+  "*.ttf",
+  "*.otf",
+  # Images
+  "*.png",
+  "*.ico",
+  "*.icns",
+  # Valgrind nonsense
+  "valgrind.supp",
+  # Other
+  "*.pdf",
+  "*.data",
+  "*.xib",
+  "src/cli/lorem_ipsum.txt",
+]
+
+[default]
+extend-ignore-re = [
+  # Ignore typos in test expectations
+  "testing\\.expect[^;]*;",
+  "kHOM\\d*",
+  # Ignore "typos" in sprite font draw fn names
+  "draw[0-9A-F]+(_[0-9A-F]+)?\\(",
+]
+
+[default.extend-words]
+Pn = "Pn"
+thr = "thr"
+# Swift oddities
+Requestor = "Requestor"
+iterm = "iterm"
+ACCES = "ACCES"
+wdth = "wdth"
+Strat = "Strat"
+grey = "gray"
+greyscale = "grayscale"
+DECID = "DECID"
+flate = "flate"
+typ = "typ"
+kend = "kend"
+# GTK
+GIR = "GIR"
+
+[type.po]
+extend-glob = ["*.po"]
+check-file = false
+
+[type.swift.extend-words]
+inout = "inout"

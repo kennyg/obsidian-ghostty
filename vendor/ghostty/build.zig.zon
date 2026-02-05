@@ -1,0 +1,121 @@
+.{
+    .name = .ghostty,
+    .version = "1.2.3",
+    .paths = .{""},
+    .fingerprint = 0x64407a2a0b4147e5,
+    .minimum_zig_version = "0.14.1",
+    .dependencies = .{
+        // Zig libs
+
+        .libxev = .{
+            // mitchellh/libxev
+            .url = "https://github.com/mitchellh/libxev/archive/7f803181b158a10fec8619f793e3b4df515566cb.tar.gz",
+            .hash = "libxev-0.0.0-86vtc2UaEwDfiTKX3iBI-s_hdzfzWQUarT3MUrmUQl-Q",
+            .lazy = true,
+        },
+        .vaxis = .{
+            // rockorager/libvaxis
+            .url = "git+https://github.com/rockorager/libvaxis#1f41c121e8fc153d9ce8c6eb64b2bbab68ad7d23",
+            .hash = "vaxis-0.1.0-BWNV_FUICQAFZnTCL11TUvnUr1Y0_ZdqtXHhd51d76Rn",
+            .lazy = true,
+        },
+        .z2d = .{
+            // vancluever/z2d
+            .url = "https://github.com/vancluever/z2d/archive/refs/tags/v0.8.1.tar.gz",
+            .hash = "z2d-0.8.1-j5P_Hq8vDwB8ZaDA54-SzESDLF2zznG_zvTHiQNJImZP",
+            .lazy = true,
+        },
+        .zig_objc = .{
+            // mitchellh/zig-objc
+            .url = "https://github.com/mitchellh/zig-objc/archive/c9e917a4e15a983b672ca779c7985d738a2d517c.tar.gz",
+            .hash = "zig_objc-0.0.0-Ir_SpwsPAQBJgi9YRm2ubJMfdoysSq5gKpsIj3izQ8Zk",
+            .lazy = true,
+        },
+        .zig_js = .{
+            // mitchellh/zig-js
+            .url = "https://deps.files.ghostty.org/zig_js-12205a66d423259567764fa0fc60c82be35365c21aeb76c5a7dc99698401f4f6fefc.tar.gz",
+            .hash = "N-V-__8AAB9YCQBaZtQjJZVndk-g_GDIK-NTZcIa63bFp9yZ",
+            .lazy = true,
+        },
+        .ziglyph = .{
+            .url = "https://deps.files.ghostty.org/ziglyph-b89d43d1e3fb01b6074bc1f7fc980324b04d26a5.tar.gz",
+            .hash = "ziglyph-0.11.2-AAAAAHPtHwB4Mbzn1KvOV7Wpjo82NYEc_v0WC8oCLrkf",
+            .lazy = true,
+        },
+        .zig_wayland = .{
+            // codeberg ifreund/zig-wayland
+            .url = "https://codeberg.org/ifreund/zig-wayland/archive/f3c5d503e540ada8cbcb056420de240af0c094f7.tar.gz",
+            .hash = "wayland-0.4.0-dev-lQa1kjfIAQCmhhQu3xF0KH-94-TzeMXOqfnP0-Dg6Wyy",
+        },
+        .zf = .{
+            // natecraddock/zf
+            .url = "https://github.com/natecraddock/zf/archive/7aacbe6d155d64d15937ca95ca6c014905eb531f.tar.gz",
+            .hash = "zf-0.10.3-OIRy8aiIAACLrBllz0zjxaH0aOe5oNm3KtEMyCntST-9",
+            .lazy = true,
+        },
+        .gobject = .{
+            // https://github.com/jcollie/ghostty-gobject based on zig_gobject
+            // Temporary until we generate them at build time automatically.
+            .url = "https://github.com/jcollie/ghostty-gobject/releases/download/0.15.1-2025-09-04-48-1/ghostty-gobject-0.15.1-2025-09-04-48-1.tar.zst",
+            .hash = "gobject-0.3.0-Skun7ET3nQAc0LzvO0NAvTiGGnmkF36cnmbeCAF6MB7Z",
+            .lazy = true,
+        },
+
+        // C libs
+        .cimgui = .{ .path = "./pkg/cimgui", .lazy = true },
+        .fontconfig = .{ .path = "./pkg/fontconfig", .lazy = true },
+        .freetype = .{ .path = "./pkg/freetype", .lazy = true },
+        .gtk4_layer_shell = .{ .path = "./pkg/gtk4-layer-shell", .lazy = true },
+        .harfbuzz = .{ .path = "./pkg/harfbuzz", .lazy = true },
+        .highway = .{ .path = "./pkg/highway", .lazy = true },
+        .libintl = .{ .path = "./pkg/libintl", .lazy = true },
+        .libpng = .{ .path = "./pkg/libpng", .lazy = true },
+        .macos = .{ .path = "./pkg/macos", .lazy = true },
+        .oniguruma = .{ .path = "./pkg/oniguruma", .lazy = true },
+        .opengl = .{ .path = "./pkg/opengl", .lazy = true },
+        .sentry = .{ .path = "./pkg/sentry", .lazy = true },
+        .simdutf = .{ .path = "./pkg/simdutf", .lazy = true },
+        .utfcpp = .{ .path = "./pkg/utfcpp", .lazy = true },
+        .wuffs = .{ .path = "./pkg/wuffs", .lazy = true },
+        .zlib = .{ .path = "./pkg/zlib", .lazy = true },
+
+        // Shader translation
+        .glslang = .{ .path = "./pkg/glslang", .lazy = true },
+        .spirv_cross = .{ .path = "./pkg/spirv-cross", .lazy = true },
+
+        // Wayland
+        .wayland = .{
+            .url = "https://deps.files.ghostty.org/wayland-9cb3d7aa9dc995ffafdbdef7ab86a949d0fb0e7d.tar.gz",
+            .hash = "N-V-__8AAKrHGAAs2shYq8UkE6bGcR1QJtLTyOE_lcosMn6t",
+            .lazy = true,
+        },
+        .wayland_protocols = .{
+            .url = "https://deps.files.ghostty.org/wayland-protocols-258d8f88f2c8c25a830c6316f87d23ce1a0f12d9.tar.gz",
+            .hash = "N-V-__8AAKw-DAAaV8bOAAGqA0-oD7o-HNIlPFYKRXSPT03S",
+            .lazy = true,
+        },
+        .plasma_wayland_protocols = .{
+            .url = "https://deps.files.ghostty.org/plasma_wayland_protocols-12207e0851c12acdeee0991e893e0132fc87bb763969a585dc16ecca33e88334c566.tar.gz",
+            .hash = "N-V-__8AAKYZBAB-CFHBKs3u4JkeiT4BMvyHu3Y5aaWF3Bbs",
+            .lazy = true,
+        },
+
+        // Fonts
+        .jetbrains_mono = .{
+            .url = "https://deps.files.ghostty.org/JetBrainsMono-2.304.tar.gz",
+            .hash = "N-V-__8AAIC5lwAVPJJzxnCAahSvZTIlG-HhtOvnM1uh-66x",
+        },
+        .nerd_fonts_symbols_only = .{
+            .url = "https://deps.files.ghostty.org/NerdFontsSymbolsOnly-3.4.0.tar.gz",
+            .hash = "N-V-__8AAMVLTABmYkLqhZPLXnMl-KyN38R8UVYqGrxqO26s",
+        },
+
+        // Other
+        .apple_sdk = .{ .path = "./pkg/apple-sdk" },
+        .iterm2_themes = .{
+            .url = "https://github.com/mbadolato/iTerm2-Color-Schemes/releases/download/release-20251002-142451-4a5043e/ghostty-themes.tgz",
+            .hash = "N-V-__8AALIsAwDyo88G5mGJGN2lSVmmFMx4YePfUvp_2o3Y",
+            .lazy = true,
+        },
+    },
+}

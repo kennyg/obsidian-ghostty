@@ -1,0 +1,26 @@
+{
+  "name": "obsidian-ghostty",
+  "version": "0.1.0",
+  "description": "Ghostty-powered terminal view for Obsidian",
+  "main": "main.js",
+  "scripts": {
+    "dev": "bun esbuild.config.cjs",
+    "build": "bun esbuild.config.cjs --production",
+    "bootstrap:zig": "node scripts/bootstrap-zig.mjs",
+    "build:native": "node scripts/build-ghostty-vt.mjs && node-gyp rebuild && cp build/Release/ghostty_vt.node native/ghostty_vt.node",
+    "build:native:electron": "node scripts/build-ghostty-vt.mjs && node-gyp rebuild --runtime=electron --target=37.6.0 --dist-url=https://electronjs.org/headers && cp build/Release/ghostty_vt.node native/ghostty_vt.node",
+    "build:pty:electron": "node-gyp rebuild --runtime=electron --target=37.6.0 --dist-url=https://electronjs.org/headers --directory node_modules/node-pty",
+    "clean:native": "rm -rf build native/ghostty_vt.node native/ghostty_vt/zig-out"
+  },
+  "dependencies": {
+    "node-addon-api": "^7.1.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "esbuild": "^0.20.2",
+    "node-gyp": "^10.1.0",
+    "obsidian": "^1.5.7",
+    "typescript": "^5.4.5"
+  }
+}

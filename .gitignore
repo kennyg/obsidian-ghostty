@@ -1,0 +1,8 @@
+node_modules/
+.context/
+build/
+native/ghostty_vt.node
+native/ghostty_vt/zig-out/
+main.js
+*.log
+.DS_Store
