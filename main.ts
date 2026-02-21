@@ -110,6 +110,7 @@ class GhosttyTerminalView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.plugin.untrackView(this);
     this.stopSession();
     this.contentEl.empty();
   }
@@ -266,6 +267,47 @@ export default class GhosttyPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "new-terminal",
+      name: "New terminal",
+      callback: () => {
+        this.newTerminal().catch(console.error);
+      },
+    });
+
+    this.addCommand({
+      id: "close-terminal",
+      name: "Close terminal",
+      checkCallback: (checking) => {
+        const leaf = this.getFocusedTerminalLeaf();
+        if (!leaf) return false;
+        if (!checking) leaf.detach();
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "next-terminal",
+      name: "Next terminal",
+      checkCallback: (checking) => {
+        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GHOSTTY);
+        if (leaves.length < 2) return false;
+        if (!checking) this.cycleTerminal(1);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "prev-terminal",
+      name: "Previous terminal",
+      checkCallback: (checking) => {
+        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GHOSTTY);
+        if (leaves.length < 2) return false;
+        if (!checking) this.cycleTerminal(-1);
+        return true;
+      },
+    });
+
     // Sync terminal theme when Obsidian theme/CSS changes
     this.registerEvent(
       (this.app.workspace as any).on("css-change", () => {
@@ -305,6 +347,44 @@ export default class GhosttyPlugin extends Plugin {
     }
 
     await this.activateView();
+  }
+
+  private async newTerminal(): Promise<void> {
+    const leaf = this.app.workspace.getLeaf("split", "horizontal");
+    await leaf.setViewState({ type: VIEW_TYPE_GHOSTTY, active: true });
+    await this.app.workspace.revealLeaf(leaf);
+    setTimeout(() => {
+      const view = leaf.view;
+      if (view instanceof GhosttyTerminalView) {
+        view.focusInput();
+      }
+    }, 100);
+  }
+
+  private getFocusedTerminalLeaf(): WorkspaceLeaf | null {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GHOSTTY);
+    return leaves.find((l) =>
+      l.view.containerEl.contains(document.activeElement)
+    ) ?? null;
+  }
+
+  private cycleTerminal(direction: 1 | -1): void {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_GHOSTTY);
+    if (leaves.length < 2) return;
+
+    const currentIndex = leaves.findIndex((l) =>
+      l.view.containerEl.contains(document.activeElement)
+    );
+    const nextIndex =
+      (currentIndex + direction + leaves.length) % leaves.length;
+    const nextLeaf = leaves[nextIndex];
+
+    this.app.workspace.revealLeaf(nextLeaf).then(() => {
+      const view = nextLeaf.view;
+      if (view instanceof GhosttyTerminalView) {
+        view.focusInput();
+      }
+    });
   }
 
   private async activateView(): Promise<void> {
