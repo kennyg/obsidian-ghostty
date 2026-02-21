@@ -3,6 +3,7 @@ import { join } from "path";
 import { ItemView, Plugin, WorkspaceLeaf } from "obsidian";
 import type { IPty } from "node-pty";
 import { Ghostty, Terminal, FitAddon } from "ghostty-web";
+import type { ITheme } from "ghostty-web";
 
 /**
  * Load Ghostty WASM directly with readFileSync.
@@ -27,6 +28,45 @@ async function loadGhostty(wasmPath: string): Promise<Ghostty> {
   });
   memory = (wasmInstance.exports as { memory: WebAssembly.Memory }).memory;
   return new Ghostty(wasmInstance);
+}
+
+/**
+ * Read an Obsidian CSS variable from the body element.
+ */
+function getCssVar(name: string): string {
+  return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
+/**
+ * Build a ghostty-web ITheme from Obsidian's current CSS variables.
+ */
+function buildThemeFromObsidian(): ITheme {
+  return {
+    background: getCssVar("--background-primary") || "#1e1e1e",
+    foreground: getCssVar("--text-normal") || "#d4d4d4",
+    cursor: getCssVar("--text-accent") || "#528bff",
+    cursorAccent: getCssVar("--background-primary") || "#1e1e1e",
+    selectionBackground: getCssVar("--text-selection") || undefined,
+
+    // Map Obsidian's color palette to ANSI colors
+    black: getCssVar("--color-base-00") || "#000000",
+    red: getCssVar("--color-red") || "#e06c75",
+    green: getCssVar("--color-green") || "#98c379",
+    yellow: getCssVar("--color-yellow") || "#e5c07b",
+    blue: getCssVar("--color-blue") || "#61afef",
+    magenta: getCssVar("--color-purple") || "#c678dd",
+    cyan: getCssVar("--color-cyan") || "#56b6c2",
+    white: getCssVar("--color-base-70") || "#abb2bf",
+
+    brightBlack: getCssVar("--color-base-50") || "#5c6370",
+    brightRed: getCssVar("--color-red") || "#e06c75",
+    brightGreen: getCssVar("--color-green") || "#98c379",
+    brightYellow: getCssVar("--color-yellow") || "#e5c07b",
+    brightBlue: getCssVar("--color-blue") || "#61afef",
+    brightMagenta: getCssVar("--color-purple") || "#c678dd",
+    brightCyan: getCssVar("--color-cyan") || "#56b6c2",
+    brightWhite: getCssVar("--color-base-100") || "#ffffff",
+  };
 }
 
 const VIEW_TYPE_GHOSTTY = "ghostty-terminal-view";
@@ -74,6 +114,12 @@ class GhosttyTerminalView extends ItemView {
     this.contentEl.empty();
   }
 
+  /** Re-read Obsidian CSS vars and push them into the terminal renderer. */
+  syncTheme(): void {
+    if (!this.term?.renderer) return;
+    this.term.renderer.setTheme(buildThemeFromObsidian());
+  }
+
   private async startSession(): Promise<void> {
     const { contentEl } = this;
     this.stopSession();
@@ -83,17 +129,14 @@ class GhosttyTerminalView extends ItemView {
     const wasmPath = join(pluginDir, "ghostty-vt.wasm");
     const ghostty = await loadGhostty(wasmPath);
 
-    // 2. Create Terminal with ghostty-web (canvas-based rendering)
+    // 2. Create Terminal themed from Obsidian's CSS variables
     this.term = new Terminal({
       ghostty,
       fontSize: 14,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       cursorBlink: true,
       scrollback: 10000,
-      theme: {
-        background: "#1e1e1e",
-        foreground: "#d4d4d4",
-      },
+      theme: buildThemeFromObsidian(),
     });
 
     // 3. Load FitAddon for auto-resize
@@ -107,10 +150,7 @@ class GhosttyTerminalView extends ItemView {
     this.term.open(container);
 
     // 4b. Stop keyboard events from bubbling to Obsidian's hotkey system.
-    // ghostty-web's InputHandler calls preventDefault but doesn't always
-    // stopPropagation, so Obsidian intercepts keys like Enter, arrows, etc.
     container.addEventListener("keydown", (e) => {
-      // Let Cmd/Ctrl+J propagate so our close handler works
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") return;
       e.stopPropagation();
     });
@@ -209,9 +249,13 @@ class GhosttyTerminalView extends ItemView {
 }
 
 export default class GhosttyPlugin extends Plugin {
+  private views: Set<GhosttyTerminalView> = new Set();
+
   async onload(): Promise<void> {
     this.registerView(VIEW_TYPE_GHOSTTY, (leaf: WorkspaceLeaf) => {
-      return new GhosttyTerminalView(leaf, this);
+      const view = new GhosttyTerminalView(leaf, this);
+      this.views.add(view);
+      return view;
     });
 
     this.addCommand({
@@ -221,10 +265,24 @@ export default class GhosttyPlugin extends Plugin {
         this.toggleView().catch(console.error);
       },
     });
+
+    // Sync terminal theme when Obsidian theme/CSS changes
+    this.registerEvent(
+      (this.app.workspace as any).on("css-change", () => {
+        for (const view of this.views) {
+          view.syncTheme();
+        }
+      })
+    );
   }
 
   onunload(): void {
-    // Views are cleaned up automatically by Obsidian
+    this.views.clear();
+  }
+
+  /** Remove a view from tracking (called implicitly when view closes). */
+  untrackView(view: GhosttyTerminalView): void {
+    this.views.delete(view);
   }
 
   private async toggleView(): Promise<void> {
