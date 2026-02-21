@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "bun esbuild.config.mjs",
     "build": "bun esbuild.config.mjs --production",
-    "build:pty:electron": "node-gyp rebuild --runtime=electron --target=37.6.0 --dist-url=https://electronjs.org/headers --directory node_modules/node-pty"
+    "build:pty:electron": "node-gyp rebuild --runtime=electron --target=37.6.0 --dist-url=https://electronjs.org/headers --directory node_modules/node-pty",
+    "test": "bun test"
   },
   "dependencies": {
     "ghostty-web": "^0.4.0",
