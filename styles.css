@@ -5,67 +5,22 @@
   padding: 0;
   min-height: 0;
 }
-.ghostty-terminal-screen.is-focused::after {
-  content: "";
-  position: absolute;
-  width: var(--ghostty-caret-w, 8px);
-  height: var(--ghostty-caret-h, 1.2em);
-  background: var(--text-normal);
-  left: calc(var(--ghostty-screen-padding) + var(--ghostty-caret-x, 0px));
-  top: calc(var(--ghostty-screen-padding) + var(--ghostty-caret-y, 0px));
-  animation: ghostty-caret-blink 1s steps(1, end) infinite;
-  opacity: calc(0.8 * var(--ghostty-caret-visible, 1));
-  pointer-events: none;
-}
-.ghostty-terminal-input {
-  position: absolute;
-  left: -9999px;
-  top: 0;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
-}
-.ghostty-terminal-screen {
+
+.ghostty-terminal-container {
   flex: 1;
-  overflow: hidden;
-  background: var(--background-primary);
-  padding: 8px;
   min-height: 0;
+  overflow: hidden;
   position: relative;
-  --ghostty-screen-padding: 8px;
-}
-.ghostty-terminal-output {
-  margin: 0;
-  padding: 0;
-  border: none;
-  font-family: var(--font-monospace);
-  font-size: 12px;
-  line-height: 1.2;
-  white-space: pre;
-  position: relative;
-  top: 0;
-  left: 0;
 }
 
-@keyframes ghostty-caret-blink {
-  50% {
-    opacity: 0;
-  }
-}
-
-.ghostty-char-measure {
-  /* Inherits font properties from parent .ghostty-terminal-output */
-  font-family: inherit;
-  font-size: inherit;
-  line-height: inherit;
-  letter-spacing: inherit;
-  visibility: hidden;
-  position: absolute;
-  white-space: pre;
-  margin: 0;
-  padding: 0;
-  border: none;
+/* Hide ghostty-web's internal textarea used for keyboard capture */
+.ghostty-terminal-container textarea {
+  position: absolute !important;
+  left: -9999px !important;
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 .ghostty-terminal-placeholder {

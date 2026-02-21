@@ -1,34 +1,46 @@
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { ItemView, Plugin, WorkspaceLeaf } from "obsidian";
 import type { IPty } from "node-pty";
-import {
-  tryLoadGhosttyNative,
-  type GhosttyNative,
-  type GhosttyNativeState,
-  type GhosttyTerminal,
-} from "./native/ghostty";
+import { Ghostty, Terminal, FitAddon } from "ghostty-web";
+
+/**
+ * Load Ghostty WASM directly with readFileSync.
+ * ghostty-web's Ghostty.load() uses `await import('fs/promises')` which
+ * breaks when esbuild bundles to CJS (Obsidian requires CJS output).
+ */
+async function loadGhostty(wasmPath: string): Promise<Ghostty> {
+  const buf = readFileSync(wasmPath);
+  const wasmBytes = buf.buffer.slice(
+    buf.byteOffset,
+    buf.byteOffset + buf.byteLength
+  );
+  const wasmModule = await WebAssembly.compile(wasmBytes);
+  let memory: WebAssembly.Memory;
+  const wasmInstance = await WebAssembly.instantiate(wasmModule, {
+    env: {
+      log: (ptr: number, len: number) => {
+        const bytes = new Uint8Array(memory.buffer, ptr, len);
+        console.log("[ghostty-vt]", new TextDecoder().decode(bytes));
+      },
+    },
+  });
+  memory = (wasmInstance.exports as { memory: WebAssembly.Memory }).memory;
+  return new Ghostty(wasmInstance);
+}
 
 const VIEW_TYPE_GHOSTTY = "ghostty-terminal-view";
 
 class GhosttyTerminalView extends ItemView {
   private pty: IPty | null = null;
-  private vt: GhosttyTerminal | null = null;
-  private outputEl: HTMLPreElement | null = null;
-  private bodyEl: HTMLElement | null = null;
-  private screenEl: HTMLElement | null = null;
-  private inputEl: HTMLTextAreaElement | null = null;
-  private resizeObserver: ResizeObserver | null = null;
-  private pendingRender = false;
-  private charSize: { width: number; height: number } | null = null;
-  private autoScroll = true;
-  private composing = false;
-  private compositionBuffer = "";
-  private scrollLines = 0;
+  private term: Terminal | null = null;
+  private fitAddon: FitAddon | null = null;
+  private resizeDisposable: { dispose(): void } | null = null;
 
   constructor(leaf: WorkspaceLeaf, private plugin: GhosttyPlugin) {
     super(leaf);
   }
+
   getViewType(): string {
     return VIEW_TYPE_GHOSTTY;
   }
@@ -46,53 +58,71 @@ class GhosttyTerminalView extends ItemView {
     contentEl.empty();
     contentEl.addClass("ghostty-terminal-view");
 
-    this.bodyEl = contentEl;
-
-    const nativeState = await Promise.resolve(this.plugin.getNativeState(true));
-
-    if (nativeState.native) {
-      this.startSession(nativeState.native);
-    } else {
+    try {
+      await this.startSession();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       contentEl.createEl("div", {
         cls: "ghostty-terminal-placeholder",
-        text: nativeState.message,
+        text: `Failed to start terminal: ${message}`,
       });
     }
   }
 
   async onClose(): Promise<void> {
-    await Promise.resolve();
     this.stopSession();
     this.contentEl.empty();
   }
 
-  private startSession(native: GhosttyNative): void {
-    if (!this.bodyEl) return;
+  private async startSession(): Promise<void> {
+    const { contentEl } = this;
     this.stopSession();
 
-    const screen = this.bodyEl.createEl("div", {
-      cls: "ghostty-terminal-screen",
-    });
-    this.screenEl = screen;
-    this.outputEl = screen.createEl("pre", {
-      cls: "ghostty-terminal-output",
+    // 1. Load ghostty WASM
+    const pluginDir = this.plugin.getPluginDirPath();
+    const wasmPath = join(pluginDir, "ghostty-vt.wasm");
+    const ghostty = await loadGhostty(wasmPath);
+
+    // 2. Create Terminal with ghostty-web (canvas-based rendering)
+    this.term = new Terminal({
+      ghostty,
+      fontSize: 14,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      cursorBlink: true,
+      scrollback: 10000,
+      theme: {
+        background: "#1e1e1e",
+        foreground: "#d4d4d4",
+      },
     });
 
-    const input = this.bodyEl.createEl("textarea", {
-      cls: "ghostty-terminal-input",
+    // 3. Load FitAddon for auto-resize
+    this.fitAddon = new FitAddon();
+    this.term.loadAddon(this.fitAddon);
+
+    // 4. Mount to DOM
+    const container = contentEl.createEl("div", {
+      cls: "ghostty-terminal-container",
     });
-    input.spellcheck = false;
-    input.autocapitalize = "off";
-    input.autocomplete = "off";
-    input.autocorrect = "off";
-    this.inputEl = input;
+    this.term.open(container);
 
-    const { cols, rows } = this.measureSize();
-    this.vt = native.createTerminal(cols, rows);
+    // 4b. Stop keyboard events from bubbling to Obsidian's hotkey system.
+    // ghostty-web's InputHandler calls preventDefault but doesn't always
+    // stopPropagation, so Obsidian intercepts keys like Enter, arrows, etc.
+    container.addEventListener("keydown", (e) => {
+      // Let Cmd/Ctrl+J propagate so our close handler works
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") return;
+      e.stopPropagation();
+    });
 
+    // 5. Fit terminal to container after DOM layout
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    this.fitAddon.fit();
+    this.fitAddon.observeResize();
+
+    // 6. Spawn PTY
     let spawnPty: typeof import("node-pty").spawn;
     try {
-      const pluginDir = this.plugin.getPluginDirPath();
       const nodePtyPath = pluginDir
         ? join(pluginDir, "node_modules", "node-pty")
         : "node-pty";
@@ -100,7 +130,7 @@ class GhosttyTerminalView extends ItemView {
       ({ spawn: spawnPty } = require(nodePtyPath) as typeof import("node-pty"));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.bodyEl?.createEl("div", {
+      contentEl.createEl("div", {
         cls: "ghostty-terminal-placeholder",
         text: `Failed to load node-pty: ${message}`,
       });
@@ -117,68 +147,49 @@ class GhosttyTerminalView extends ItemView {
 
     this.pty = spawnPty(shell, [], {
       name: "xterm-256color",
-      cols,
-      rows,
+      cols: this.term.cols,
+      rows: this.term.rows,
       cwd,
       env: process.env as Record<string, string>,
     });
 
-    this.pty.onData((data) => {
-      if (!this.vt) return;
-      this.vt.feed(data);
-      this.scheduleRender();
+    // 7. Wire bidirectional data flow
+    this.pty.onData((data) => this.term?.write(data));   // PTY -> Terminal
+    this.term.onData((data) => this.pty?.write(data));   // Terminal -> PTY
+
+    // 8. Wire resize: when terminal resizes (via FitAddon), resize the PTY
+    this.resizeDisposable = this.term.onResize(({ cols, rows }) => {
+      try {
+        this.pty?.resize(cols, rows);
+      } catch {
+        // ignore resize errors on dead PTY
+      }
     });
 
-    this.bodyEl.tabIndex = 0;
-    this.bodyEl.addEventListener("mousedown", this.focusTerminal);
-    this.bodyEl.addEventListener("click", this.focusTerminal);
-    this.screenEl.addEventListener("scroll", this.handleScroll, { passive: true });
-    this.screenEl.addEventListener("wheel", this.handleWheel, { passive: false });
-    this.inputEl.addEventListener("keydown", this.handleKeyDown, true);
-    this.inputEl.addEventListener("paste", this.handlePaste, true);
-    this.inputEl.addEventListener("input", this.handleInput, true);
-    this.inputEl.addEventListener(
-      "compositionstart",
-      this.handleCompositionStart,
-      true
-    );
-    this.inputEl.addEventListener(
-      "compositionupdate",
-      this.handleCompositionUpdate,
-      true
-    );
-    this.inputEl.addEventListener(
-      "compositionend",
-      this.handleCompositionEnd,
-      true
-    );
-    this.inputEl.addEventListener("focus", this.handleFocus);
-    this.inputEl.addEventListener("blur", this.handleBlur);
-    this.inputEl.focus();
-
-    this.resizeObserver = new ResizeObserver(() => {
-      // Invalidate char size cache on resize
-      this.charSize = null;
-      this.updateSize();
+    // 9. Handle Cmd/Ctrl+J to close terminal
+    // NOTE: ghostty-web has inverted semantics from xterm.js —
+    // return true = "I consumed this, skip it", false = "let terminal handle it"
+    this.term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
+        if (event.type === "keydown") {
+          this.leaf.detach();
+        }
+        return true; // consumed — don't send to terminal
+      }
+      return false; // not consumed — let terminal process normally
     });
-    this.resizeObserver.observe(screen);
 
-    // Delay initial render to ensure styles are applied
-    requestAnimationFrame(() => {
-      this.charSize = null; // Re-measure after styles are applied
-      this.scheduleRender();
-    });
+    // 10. Focus terminal
+    this.term.focus();
   }
 
   private stopSession(): void {
-    if (this.bodyEl) {
-      this.bodyEl.removeEventListener("mousedown", this.focusTerminal);
-      this.bodyEl.removeEventListener("click", this.focusTerminal);
-    }
-    if (this.resizeObserver) {
-      this.resizeObserver.disconnect();
-      this.resizeObserver = null;
-    }
+    this.resizeDisposable?.dispose();
+    this.resizeDisposable = null;
+
+    this.fitAddon?.dispose();
+    this.fitAddon = null;
+
     if (this.pty) {
       try {
         this.pty.kill();
@@ -187,359 +198,17 @@ class GhosttyTerminalView extends ItemView {
       }
       this.pty = null;
     }
-    if (this.vt) {
-      this.vt.free();
-      this.vt = null;
-    }
-    if (this.screenEl) {
-      this.screenEl.removeEventListener("scroll", this.handleScroll);
-      this.screenEl.removeEventListener("wheel", this.handleWheel);
-    }
-    if (this.inputEl) {
-      this.inputEl.removeEventListener("keydown", this.handleKeyDown, true);
-      this.inputEl.removeEventListener("paste", this.handlePaste, true);
-      this.inputEl.removeEventListener("input", this.handleInput, true);
-      this.inputEl.removeEventListener(
-        "compositionstart",
-        this.handleCompositionStart,
-        true
-      );
-      this.inputEl.removeEventListener(
-        "compositionupdate",
-        this.handleCompositionUpdate,
-        true
-      );
-      this.inputEl.removeEventListener(
-        "compositionend",
-        this.handleCompositionEnd,
-        true
-      );
-      this.inputEl.removeEventListener("focus", this.handleFocus);
-      this.inputEl.removeEventListener("blur", this.handleBlur);
-    }
-    this.outputEl = null;
-    this.screenEl = null;
-    this.inputEl = null;
-    this.pendingRender = false;
-    this.charSize = null;
-    this.autoScroll = true;
-    this.composing = false;
-    this.compositionBuffer = "";
-    this.scrollLines = 0;
-  }
 
-  private scheduleRender(): void {
-    if (this.pendingRender || !this.outputEl || !this.vt) return;
-    this.pendingRender = true;
-    requestAnimationFrame(() => {
-      this.pendingRender = false;
-      if (!this.outputEl || !this.vt) return;
-      this.outputEl.setText(this.vt.dumpViewport());
-      this.updateCaret();
-      const container = this.screenEl;
-      if (container && this.autoScroll) {
-        container.scrollTop = container.scrollHeight;
-      }
-    });
+    this.term?.dispose();
+    this.term = null;
   }
-
-  private updateSize(): void {
-    if (!this.vt || !this.pty) return;
-    const { cols, rows } = this.measureSize();
-    this.vt.resize(cols, rows);
-    this.pty.resize(cols, rows);
-    this.scheduleRender();
-  }
-
-  private measureSize(): { cols: number; rows: number } {
-    const target = this.screenEl ?? this.bodyEl;
-    if (!target) {
-      return { cols: 80, rows: 24 };
-    }
-    const rect = target.getBoundingClientRect();
-    const { width, height } = this.getCharSize();
-    const cols = Math.max(2, Math.floor(rect.width / width));
-    const rows = Math.max(2, Math.floor((rect.height - 12) / height));
-    return { cols, rows };
-  }
-
-  private getCharSize(): { width: number; height: number } {
-    if (this.charSize) return this.charSize;
-    const target = this.outputEl ?? this.bodyEl;
-    if (!target) {
-      return { width: 8, height: 16 };
-    }
-    // Use a longer string and divide for more accurate measurement
-    const testString = "MMMMMMMMMM";
-    const span = document.createElement("span");
-    span.textContent = testString;
-    span.addClass("ghostty-char-measure");
-    target.appendChild(span);
-    const rect = span.getBoundingClientRect();
-    span.remove();
-    this.charSize = {
-      width: (rect.width / testString.length) || 8,
-      height: rect.height || 16,
-    };
-    return this.charSize;
-  }
-
-  private focusTerminal = (): void => {
-    this.inputEl?.focus();
-  };
 
   focusInput(): void {
-    this.inputEl?.focus();
+    this.term?.focus();
   }
-
-  private updateCaret(): void {
-    if (!this.screenEl || !this.vt) return;
-    const cursor = this.vt.cursorPosition();
-    if (!cursor?.valid) {
-      this.screenEl.setCssProps({ "--ghostty-caret-visible": "0" });
-      return;
-    }
-    
-    // Hide caret when scrolled away from the active screen
-    if (!this.autoScroll) {
-      this.screenEl.setCssProps({ "--ghostty-caret-visible": "0" });
-      return;
-    }
-    
-    const { width, height } = this.getCharSize();
-    // Cursor position is 1-indexed from VT, convert to 0-indexed pixels
-    const x = (cursor.col - 1) * width;
-    const y = (cursor.row - 1) * height;
-    this.screenEl.setCssProps({
-      "--ghostty-caret-x": `${x}px`,
-      "--ghostty-caret-y": `${y}px`,
-      "--ghostty-caret-w": `${width}px`,
-      "--ghostty-caret-h": `${height}px`,
-      "--ghostty-caret-visible": "1",
-    });
-  }
-
-  private handleFocus = (): void => {
-    this.screenEl?.addClass("is-focused");
-  };
-
-  private handleBlur = (): void => {
-    this.screenEl?.removeClass("is-focused");
-  };
-
-  private handleScroll = (): void => {
-    this.updateCaret();
-  };
-
-  private handleWheel = (event: WheelEvent): void => {
-    if (!this.vt) return;
-    event.preventDefault();
-
-    const { height } = this.getCharSize();
-    this.scrollLines += event.deltaY;
-
-    const linesToScroll = Math.trunc(this.scrollLines / height);
-    if (linesToScroll !== 0) {
-      this.scrollLines -= linesToScroll * height;
-      // Negative = scroll up (show older content), positive = scroll down
-      const result = this.vt.scrollViewport(linesToScroll);
-      if (result === 0) {
-        if (linesToScroll < 0) {
-          this.autoScroll = false;
-        } else {
-          // Scrolling down - re-enable autoScroll
-          this.autoScroll = true;
-        }
-        this.scheduleRender();
-      }
-    }
-  };
-
-  private handlePaste = (event: ClipboardEvent): void => {
-    if (!this.pty) return;
-    const text = event.clipboardData?.getData("text");
-    if (text) {
-      this.pty.write(text);
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  };
-
-  private handleKeyDown = (event: KeyboardEvent): void => {
-    if (!this.pty) return;
-    
-    // Only handle when our input is focused
-    if (document.activeElement !== this.inputEl) return;
-
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      this.leaf.detach();
-      return;
-    }
-    if (event.isComposing || event.key === "Process") {
-      return;
-    }
-
-    // Handle scroll keys with Shift modifier or Page Up/Down
-    if (this.handleScrollKey(event)) {
-      return;
-    }
-
-    let data: string | null = null;
-
-    // Cmd+Backspace = Ctrl+U (kill line backward)
-    if (event.metaKey && event.key === "Backspace") {
-      data = "\x15";
-    // Cmd+A = Ctrl+A (beginning of line)
-    } else if (event.metaKey && event.key.toLowerCase() === "a") {
-      data = "\x01";
-    // Cmd+E = Ctrl+E (end of line)
-    } else if (event.metaKey && event.key.toLowerCase() === "e") {
-      data = "\x05";
-    // Cmd+K = Ctrl+K (kill to end of line)
-    } else if (event.metaKey && event.key.toLowerCase() === "k") {
-      data = "\x0b";
-    // Cmd+U = Ctrl+U (kill to beginning of line)
-    } else if (event.metaKey && event.key.toLowerCase() === "u") {
-      data = "\x15";
-    // Cmd+L = Ctrl+L (clear screen)
-    } else if (event.metaKey && event.key.toLowerCase() === "l") {
-      data = "\x0c";
-    // Option+Left = move back one word (Esc+b)
-    } else if (event.altKey && event.key === "ArrowLeft") {
-      data = "\x1bb";
-    // Option+Right = move forward one word (Esc+f)
-    } else if (event.altKey && event.key === "ArrowRight") {
-      data = "\x1bf";
-    // Option+Backspace = delete word backward (Esc+Backspace)
-    } else if (event.altKey && event.key === "Backspace") {
-      data = "\x1b\x7f";
-    // Option+D = delete word forward
-    } else if (event.altKey && event.key.toLowerCase() === "d") {
-      data = "\x1bd";
-    } else if (event.ctrlKey && event.key.length === 1) {
-      const code = event.key.toUpperCase().charCodeAt(0) - 64;
-      if (code >= 1 && code <= 26) {
-        data = String.fromCharCode(code);
-      }
-    } else if (event.key === "Enter") {
-      data = "\r";
-    } else if (event.key === "Backspace") {
-      data = "\x7f";
-    } else if (event.key === "Tab") {
-      data = "\t";
-    } else if (event.key === "Escape") {
-      data = "\x1b";
-    } else if (event.key === "ArrowUp") {
-      data = "\x1b[A";
-    } else if (event.key === "ArrowDown") {
-      data = "\x1b[B";
-    } else if (event.key === "ArrowRight") {
-      data = "\x1b[C";
-    } else if (event.key === "ArrowLeft") {
-      data = "\x1b[D";
-    // Home = beginning of line
-    } else if (event.key === "Home") {
-      data = "\x1b[H";
-    // End = end of line  
-    } else if (event.key === "End") {
-      data = "\x1b[F";
-    // Delete key
-    } else if (event.key === "Delete") {
-      data = "\x1b[3~";
-    }
-
-    if (data) {
-      this.pty.write(data);
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-    }
-  };
-
-  private handleScrollKey(event: KeyboardEvent): boolean {
-    if (!this.vt) return false;
-
-    let delta = 0;
-    const pageSize = this.measureSize().rows - 1;
-
-    if (event.key === "PageUp") {
-      delta = -pageSize;
-    } else if (event.key === "PageDown") {
-      delta = pageSize;
-    } else if (event.shiftKey && event.key === "ArrowUp") {
-      delta = -1;
-    } else if (event.shiftKey && event.key === "ArrowDown") {
-      delta = 1;
-    } else if (event.key === "Home" && event.shiftKey) {
-      // Scroll to top
-      this.vt.scrollViewport(-10000);
-      this.autoScroll = false;
-      this.scheduleRender();
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      return true;
-    } else if (event.key === "End" && event.shiftKey) {
-      // Scroll to bottom
-      this.vt.scrollViewport(10000);
-      this.autoScroll = true;
-      this.scheduleRender();
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      return true;
-    }
-
-    if (delta !== 0) {
-      const result = this.vt.scrollViewport(delta);
-      if (result === 0) {
-        this.autoScroll = delta > 0; // true if scrolling down, false if up
-        this.scheduleRender();
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      event.stopImmediatePropagation();
-      return true;
-    }
-
-    return false;
-  };
-
-  private handleInput = (): void => {
-    if (!this.pty || !this.inputEl || this.composing) return;
-    const value = this.inputEl.value;
-    if (value.length > 0) {
-      this.pty.write(value);
-      this.inputEl.value = "";
-    }
-  };
-
-  private handleCompositionStart = (): void => {
-    this.composing = true;
-    this.compositionBuffer = "";
-  };
-
-  private handleCompositionUpdate = (event: CompositionEvent): void => {
-    this.compositionBuffer = event.data ?? "";
-  };
-
-  private handleCompositionEnd = (event: CompositionEvent): void => {
-    if (!this.pty || !this.inputEl) return;
-    const text = event.data ?? this.compositionBuffer;
-    if (text) {
-      this.pty.write(text);
-    }
-    this.inputEl.value = "";
-    this.composing = false;
-    this.compositionBuffer = "";
-  };
 }
 
 export default class GhosttyPlugin extends Plugin {
-  private nativeState: GhosttyNativeState | null = null;
   async onload(): Promise<void> {
     this.registerView(VIEW_TYPE_GHOSTTY, (leaf: WorkspaceLeaf) => {
       return new GhosttyTerminalView(leaf, this);
@@ -552,8 +221,6 @@ export default class GhosttyPlugin extends Plugin {
         this.toggleView().catch(console.error);
       },
     });
-
-    await Promise.resolve();
   }
 
   onunload(): void {
@@ -608,24 +275,14 @@ export default class GhosttyPlugin extends Plugin {
     }, 100);
   }
 
-  getNativeState(refresh = false): GhosttyNativeState {
-    if (refresh || !this.nativeState || !this.nativeState.native) {
-      this.nativeState = tryLoadGhosttyNative(this.resolvePluginDir());
-    }
-    return this.nativeState;
-  }
-
   getPluginDirPath(): string {
     return this.resolvePluginDir();
   }
 
   private resolvePluginDir(): string {
     const candidates: string[] = [];
-    const manifestDir = (this.manifest as { dir?: string }).dir;
-    if (manifestDir) {
-      candidates.push(manifestDir);
-    }
 
+    // Prefer the absolute path derived from the vault adapter
     const adapter = this.app.vault.adapter as {
       getBasePath?: () => string;
     };
@@ -636,6 +293,12 @@ export default class GhosttyPlugin extends Plugin {
           join(basePath, this.app.vault.configDir, "plugins", this.manifest.id)
         );
       }
+    }
+
+    // Fall back to manifest.dir (may be relative)
+    const manifestDir = (this.manifest as { dir?: string }).dir;
+    if (manifestDir) {
+      candidates.push(manifestDir);
     }
 
     for (const dir of candidates) {
