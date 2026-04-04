@@ -4,7 +4,7 @@ import { join } from "path";
 describe("loadGhostty", () => {
   it("loads the real WASM and returns a Ghostty instance", async () => {
     const { loadGhostty } = await import("./lib");
-    const wasmPath = join(import.meta.dir, "ghostty-vt.wasm");
+    const wasmPath = join(import.meta.dir, "..", "ghostty-vt.wasm");
 
     const ghostty = await loadGhostty(wasmPath);
 
