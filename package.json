@@ -5,8 +5,8 @@
   "type": "module",
   "main": "main.js",
   "scripts": {
-    "dev": "bun esbuild.config.mjs",
-    "build": "bun esbuild.config.mjs --production",
+    "dev": "vite build --mode development",
+    "build": "vite build --mode production",
     "build:pty:electron": "node-gyp rebuild --runtime=electron --target=37.6.0 --dist-url=https://electronjs.org/headers --directory node_modules/node-pty",
     "test": "bun test"
   },
@@ -16,8 +16,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
-    "esbuild": "^0.20.2",
     "obsidian": "^1.5.7",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "vite": "^8.0.3"
   }
 }
