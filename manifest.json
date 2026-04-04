@@ -3,8 +3,8 @@
   "name": "Ghostty terminal",
   "version": "0.1.0",
   "minAppVersion": "1.0.0",
-  "description": "Embedded Ghostty-powered terminal view.",
-  "author": "John Jeong",
-  "authorUrl": "https://github.com/johnjeong",
+  "description": "Embedded terminal view powered by ghostty-web (WASM). Unofficial.",
+  "author": "Kenny Gatdula",
+  "authorUrl": "https://github.com/kennyg",
   "isDesktopOnly": true
 }

@@ -1,17 +1,29 @@
 import { existsSync } from "fs";
 import { join } from "path";
-import { ItemView, Plugin, WorkspaceLeaf } from "obsidian";
+import { addIcon, ItemView, Plugin, WorkspaceLeaf } from "obsidian";
 import type { IPty } from "node-pty";
 import { Terminal, FitAddon } from "ghostty-web";
 import { loadGhostty, buildThemeFromObsidian } from "./lib";
 
 const VIEW_TYPE_GHOSTTY = "ghostty-terminal-view";
+const GHOSTTY_ICON_ID = "ghostty-logo";
+
+addIcon(
+  GHOSTTY_ICON_ID,
+  `<g transform="translate(13.5, 0) scale(3.7)">` +
+    `<path d="M20.3955 32C19.1436 32 17.9152 31.6249 16.879 30.9333C15.8428 31.6249 14.6121 32 13.3625 32C12.113 32 10.8822 31.6249 9.84606 30.9333C8.8169 31.6249 7.62598 31.9906 6.37177 32H6.33426C4.63228 32 3.0358 31.3225 1.83316 30.0941C0.64928 28.8844 -0.00244141 27.2926 -0.00244141 25.6117V13.3626C-9.70841e-05 5.99443 5.99433 0 13.3625 0C20.7307 0 26.7252 5.99443 26.7252 13.3626V25.6164C26.7252 29.0086 24.0995 31.8078 20.7472 31.9906C20.6299 31.9977 20.5127 32 20.3955 32Z" fill="currentColor"/>` +
+    `<path d="M23.9119 13.3627V25.6165C23.9119 27.4919 22.4654 29.079 20.5923 29.1822C19.6827 29.2314 18.8435 28.936 18.1941 28.4132C17.4158 27.7873 16.321 27.8154 15.5356 28.4343C14.9378 28.9055 14.183 29.1869 13.3601 29.1869C12.5372 29.1869 11.7847 28.9055 11.1869 28.4343C10.3922 27.8084 9.29738 27.8084 8.50266 28.4343C7.90954 28.9009 7.16405 29.1822 6.35291 29.1869C4.40478 29.2009 2.81299 27.5599 2.81299 25.6118V13.3627C2.81299 7.53704 7.5368 2.81323 13.3624 2.81323C19.1881 2.81323 23.9119 7.53704 23.9119 13.3627Z" fill="var(--background-primary)"/>` +
+    `<path d="M11.2808 12.4366L7.3494 10.1673C6.83833 9.87192 6.18192 10.0477 5.88654 10.5588C5.59115 11.0699 5.76698 11.7263 6.27804 12.0217L8.60361 13.365L6.27804 14.7083C5.76698 15.0036 5.59115 15.6577 5.88654 16.1711C6.18192 16.6822 6.83599 16.858 7.3494 16.5626L11.2808 14.2933C11.9935 13.8807 11.9935 12.8516 11.2808 12.4389V12.4366Z" fill="currentColor"/>` +
+    `<path d="M20.1822 12.2913H15.0176C14.4269 12.2913 13.9463 12.7695 13.9463 13.3626C13.9463 13.9557 14.4245 14.434 15.0176 14.434H20.1822C20.773 14.434 21.2535 13.9557 21.2535 13.3626C21.2535 12.7695 20.7753 12.2913 20.1822 12.2913Z" fill="currentColor"/>` +
+    `</g>`
+);
 
 class GhosttyTerminalView extends ItemView {
   private pty: IPty | null = null;
   private term: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
   private resizeDisposable: { dispose(): void } | null = null;
+  private title: string = "";
 
   constructor(leaf: WorkspaceLeaf, private plugin: GhosttyPlugin) {
     super(leaf);
@@ -22,17 +34,22 @@ class GhosttyTerminalView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Ghostty terminal";
+    return this.title || "Ghostty terminal";
   }
 
   getIcon(): string {
-    return "terminal";
+    return GHOSTTY_ICON_ID;
   }
 
   async onOpen(): Promise<void> {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("ghostty-terminal-view");
+
+    // Add "+" button to the view header for new tabs
+    this.addAction("plus", "New terminal tab", () => {
+      this.plugin.newTerminalTab(this.leaf).catch(console.error);
+    });
 
     try {
       await this.startSession();
@@ -130,7 +147,11 @@ class GhosttyTerminalView extends ItemView {
       env: process.env as Record<string, string>,
     });
 
-    // 7. Wire bidirectional data flow
+    // 7. Set initial title from cwd
+    this.title = cwd;
+    (this.leaf as any).updateHeader?.();
+
+    // 8. Wire bidirectional data flow
     this.pty.onData((data) => this.term?.write(data));   // PTY -> Terminal
     this.term.onData((data) => this.pty?.write(data));   // Terminal -> PTY
 
@@ -193,6 +214,10 @@ export default class GhosttyPlugin extends Plugin {
       const view = new GhosttyTerminalView(leaf, this);
       this.views.add(view);
       return view;
+    });
+
+    this.addRibbonIcon(GHOSTTY_ICON_ID, "Ghostty terminal", () => {
+      this.activateView().catch(console.error);
     });
 
     this.addCommand({
@@ -286,7 +311,16 @@ export default class GhosttyPlugin extends Plugin {
   }
 
   private async newTerminal(): Promise<void> {
-    const leaf = this.app.workspace.getLeaf("split", "horizontal");
+    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_GHOSTTY);
+    if (existing.length > 0) {
+      await this.newTerminalTab(existing[0]);
+    } else {
+      await this.activateView();
+    }
+  }
+
+  async newTerminalTab(siblingLeaf: WorkspaceLeaf): Promise<void> {
+    const leaf = this.app.workspace.createLeafBySplit(siblingLeaf, "vertical", false);
     await leaf.setViewState({ type: VIEW_TYPE_GHOSTTY, active: true });
     await this.app.workspace.revealLeaf(leaf);
     setTimeout(() => {
